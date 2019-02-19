@@ -40,7 +40,7 @@ class Mapper:
         self.lidar = lidar
         self.ranges = lidar["lidar_ranges"]
         self.angles = np.arange(-135, 135.25, 0.25)*np.pi/180.0
-        self.transform_lidar_body = np.array([[1, 0, -0.0029833/2], [0, 1, 0], [0, 0, 1]])
+        self.transform_lidar_body = np.array([[1, 0, -0.13323], [0, 1, 0], [0, 0, 1]])
         self.MAP = {
             "res":     0.1,
             "xmin":    -40,
@@ -94,7 +94,7 @@ class PosePredictor:
         self.tau = 1/40  # 40 Hz
         self.sd = 0.001# Standard deviation of noise
         self.last_encoder_stamp = 0
-        self.offset = 70
+        self.last_imu_readings = []
         self.MAP = {
             "res":     0.1,
             "xmin":    -40,
@@ -108,33 +108,48 @@ class PosePredictor:
 
     def pose_t_plus_one(self, t, particle):  # New predicted pose with noise added
         # TODO: Fix sync between imu and lidar
-        #if t[2] == "imu" and t[1] > self.last_encoder_stamp
-        tau = self.tau
-        x = particle.pose[0]
-        y = particle.pose[1]
-        theta = particle.pose[2]
-        imu_t = floor((t-1)*self.ratio) + self.offset
-        av_yaw_rate = sum(self.yaw[imu_t:ceil(imu_t+self.ratio)])/(ceil(imu_t+self.ratio)-imu_t)
-        fr, fl, rr, rl = self.encoder["encoder_counts"][:, t]
-        dist_l = (fl+rl)/2 * 0.0022
-        dist_r = (fr+rr)/2 * 0.0022
-        v_l = dist_l/tau
-        v_r = dist_r/tau
-        v = (v_l+v_r)/2
-        delta_x = v * tau * np.sinc(av_yaw_rate*tau/2) * cos(theta+av_yaw_rate*tau/2)
-        delta_y = v * tau * np.sinc(av_yaw_rate*tau/2) * sin(theta+av_yaw_rate*tau/2)
-        delta_theta = tau * av_yaw_rate
-        x = x + delta_x
-        y = y + delta_y
-        theta = theta + delta_theta
-        noised_x = x + np.random.normal(0, self.sd, 1)[0]
-        noised_y = y + np.random.normal(0, self.sd, 1)[0]
-        noised_theta = theta + np.random.normal(0, self.sd/2, 1)[0]
-        pose = np.array([noised_x, noised_y, noised_theta])
-        weight = particle.weight
-        x, y = self.points_to_cells(noised_x, noised_y)
+        if t[2] == "imu":
+            if t[1] > self.last_encoder_stamp:
+                self.last_imu_readings.append(self.yaw[t[0]])
+                return particle
+            else:
+                print("somethings fucky")
+        elif t[2] == "encoder":
+            tau = self.tau
+            x = particle.pose[0]
+            y = particle.pose[1]
+            theta = particle.pose[2]
 
-        return Particle(pose, weight)
+            if len(self.last_imu_readings) == 0:
+                av_yaw_rate = 0
+            else:
+                av_yaw_rate = sum(self.last_imu_readings)/float(len(self.last_imu_readings))
+
+            fr, fl, rr, rl = self.encoder["encoder_counts"][:, t[0]]
+            dist_l = (fl+rl)/2 * 0.0022
+            dist_r = (fr+rr)/2 * 0.0022
+            v_l = dist_l/tau
+            v_r = dist_r/tau
+            v = (v_l+v_r)/2
+            delta_x = v * tau * np.sinc(av_yaw_rate*tau/2) * cos(theta+av_yaw_rate*tau/2)
+            delta_y = v * tau * np.sinc(av_yaw_rate*tau/2) * sin(theta+av_yaw_rate*tau/2)
+            delta_theta = tau * av_yaw_rate
+            x = x + delta_x
+            y = y + delta_y
+            theta = theta + delta_theta
+            noised_x = x + np.random.normal(0, self.sd, 1)[0]
+            noised_y = y + np.random.normal(0, self.sd, 1)[0]
+            noised_theta = theta + np.random.normal(0, self.sd/2, 1)[0]
+            pose = np.array([noised_x, noised_y, noised_theta])
+            particle.pose = pose
+            particle.transform = particle.generate_transform()
+            self.last_imu_readings = []
+            return particle
+        else:
+            print("lidar scan entered")
+            return False
+
+
 
     def points_to_cells(self, x, y):
         x = np.ceil((x - self.MAP['xmin']) / self.MAP['res']).astype(np.int16) - 1
@@ -176,7 +191,7 @@ class PoseUpdate:
         self.MAP = copy.deepcopy(log_odds)
         self.MAP["map"][self.MAP["map"] <= 0] = 0
         self.MAP["map"][self.MAP["map"] > 3] = 1
-        z_lidar = helpers.lidar_ranges_to_points(self.ranges[:, t+1], self.angles)
+        z_lidar = helpers.lidar_ranges_to_points(self.ranges[:, t], self.angles)
         z_body = helpers.transformation(z_lidar, self.transform_lidar_body)
         x_im = np.arange(self.MAP['xmin'], self.MAP['xmax'] + self.MAP['res'], self.MAP['res'])
         y_im = np.arange(self.MAP['ymin'], self.MAP['ymax'] + self.MAP['res'], self.MAP['res'])
@@ -206,8 +221,7 @@ class PoseUpdate:
                 if theta == 0:
                     main_corr = corr[4][4]
                     correlations[idx] = corr[4][4]
-                if weight > max_corr_theta and weight > 1.5*main_corr:  # New point has to have x times the corr as current
-                    #print(weight, main_corr)
+                if weight > max_corr_theta and weight > 100*main_corr:  # New point has to have x times the corr as current
                     max_corr_theta = weight
                     correlations[idx] = weight
                     best_x = x
@@ -243,6 +257,9 @@ class PoseUpdate:
             best_particle.weight = 1/particles.shape[0]
             particles[:] = best_particle
 
+class TextureMapper:
+    def __init__(self):
+        self.MAP = 0
 
 
 
@@ -273,9 +290,9 @@ if __name__ == "__main__":
               ["imu" for i in range(imu["imu_stamps"].shape[0])])
     stamps = np.concatenate([lidar["lidar_stamps"], encoder["encoder_stamps"], imu["imu_stamps"]])
     readings = list(zip(seq, stamps, source))
-    readings = sorted(readings, key=itemgetter(0))
+    readings = sorted(readings, key=itemgetter(1))
 
-    N = 5
+    N = 1
     mapper = Mapper(lidar)
     current_map = mapper.MAP
     predictor = PosePredictor(imu, encoder)
@@ -284,20 +301,21 @@ if __name__ == "__main__":
     best_particle = particles[0]
 
     counter = 0
-    for t in readings:#encoder["encoder_counts"].shape[1]-30):
-        if t[2] == "lidar":
-            current_map = mapper.mapping(t[0], best_particle)
-        elif t[2] == "encoder":
+    for reading in readings:#encoder["encoder_counts"].shape[1]-30):
+        if reading[2] == "lidar":
+            print(counter)
+            # if counter > 1000:
+            #     break
+            counter += 1
+            current_map = mapper.mapping(reading[0], best_particle)
+            particles, best_particle = updater.weighting(reading[0], particles, current_map)
+        else:  # Particles remain unchanged if t is an IMU reading, waits for encoder
             for idx, p in enumerate(particles):
-                particles[idx] = predictor.pose_t_plus_one(t[0], particles[idx])  # Might use best_particle
-            particles, best_particle = updater.weighting(t[0], particles, current_map)
-        #best_particle = particles[0]
+                particles[idx] = predictor.pose_t_plus_one(reading, particles[idx])  # Might use best_particle
+        best_particle = particles[0]
         predictor.best_trajectory(best_particle)
         mapper.decay()
-        counter += 1
-        print(counter)
-        if counter > 10000:
-            break
+
     helpers.plot(mapper.MAP, "log_odds.png")
     helpers.plot(predictor.MAP, "trajectory.png")
 

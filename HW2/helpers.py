@@ -14,6 +14,9 @@ def transformation(points, transform):
     transformed_points = np.apply_along_axis(func, 0, points)
     return transformed_points[:2]
 
+def rotation_matrix(roll, pitch, yaw):
+    r1 = [roll]
+
 def lidar_ranges_to_points(ranges, angles):
     valid_ranges = np.logical_and((ranges < 30), (ranges > 0.1))
     ranges = ranges[valid_ranges]

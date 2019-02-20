@@ -184,11 +184,11 @@ def test_mapCorrelation():
   fig2 = plt.figure()
   plt.imshow(MAP['map'],cmap="hot");
 
-  # #plot correlation
-  # fig3 = plt.figure()
-  # ax3 = fig3.gca(projection='3d')
-  # X, Y = np.meshgrid(np.arange(0,9), np.arange(0,9))
-  # ax3.plot_surface(X,Y,c,linewidth=0,cmap=plt.cm.jet, antialiased=False,rstride=1, cstride=1)
+  #plot correlation
+  fig3 = plt.figure()
+  ax3 = fig3.gca(projection='3d')
+  X, Y = np.meshgrid(np.arange(0,9), np.arange(0,9))
+  ax3.plot_surface(X,Y,c,linewidth=0,cmap=plt.cm.jet, antialiased=False,rstride=1, cstride=1)
   plt.show()
   
   

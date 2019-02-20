@@ -43,10 +43,10 @@ class Mapper:
         self.transform_lidar_body = np.array([[1, 0, -0.13323], [0, 1, 0], [0, 0, 1]])
         self.MAP = {
             "res":     0.1,
-            "xmin":    -40,
-            "ymin":    -40,
-            "xmax":     40,
-            "ymax":     40
+            "xmin":    -35,
+            "ymin":    -35,
+            "xmax":     35,
+            "ymax":     35
         }
         self.MAP["sizex"] = int(np.ceil((self.MAP["xmax"] - self.MAP["xmin"]) / self.MAP["res"] + 1))
         self.MAP["sizey"] = int(np.ceil((self.MAP["ymax"] - self.MAP["ymin"]) / self.MAP["res"] + 1))
@@ -86,21 +86,21 @@ class Mapper:
 
 class PosePredictor:
     def __init__(self, imu, encoder):
-        self.filter = signal.butter(5, 0.01)
+        self.filter = signal.butter(5, 0.1)
         self.imu = imu
         self.yaw = signal.filtfilt(self.filter[0], self.filter[1], imu["imu_angular_velocity"][2])
         self.encoder = encoder
         self.ratio = self.imu["imu_stamps"].shape[0]/self.encoder["encoder_stamps"].shape[0]  # Number of imu samples per encoder sample
         self.tau = 1/40  # 40 Hz
-        self.sd = 0.001# Standard deviation of noise
+        self.sd = 0.001  # Standard deviation of noise
         self.last_encoder_stamp = 0
         self.last_imu_readings = []
         self.MAP = {
             "res":     0.1,
-            "xmin":    -40,
-            "ymin":    -40,
-            "xmax":     40,
-            "ymax":     40,
+            "xmin":    -35,
+            "ymin":    -35,
+            "xmax":     35,
+            "ymax":     35,
         }
         self.MAP["sizex"] = int(np.ceil((self.MAP["xmax"] - self.MAP["xmin"]) / self.MAP["res"] + 1))
         self.MAP["sizey"] = int(np.ceil((self.MAP["ymax"] - self.MAP["ymin"]) / self.MAP["res"] + 1))
@@ -119,12 +119,10 @@ class PosePredictor:
             x = particle.pose[0]
             y = particle.pose[1]
             theta = particle.pose[2]
-
             if len(self.last_imu_readings) == 0:
                 av_yaw_rate = 0
             else:
                 av_yaw_rate = sum(self.last_imu_readings)/float(len(self.last_imu_readings))
-
             fr, fl, rr, rl = self.encoder["encoder_counts"][:, t[0]]
             dist_l = (fl+rl)/2 * 0.0022
             dist_r = (fr+rr)/2 * 0.0022
@@ -190,16 +188,15 @@ class PoseUpdate:
     def weighting(self, t, particles, log_odds):
         self.MAP = copy.deepcopy(log_odds)
         self.MAP["map"][self.MAP["map"] <= 0] = 0
-        self.MAP["map"][self.MAP["map"] > 3] = 1
+        self.MAP["map"][self.MAP["map"] > 0] = 1
         z_lidar = helpers.lidar_ranges_to_points(self.ranges[:, t], self.angles)
         z_body = helpers.transformation(z_lidar, self.transform_lidar_body)
         x_im = np.arange(self.MAP['xmin'], self.MAP['xmax'] + self.MAP['res'], self.MAP['res'])
         y_im = np.arange(self.MAP['ymin'], self.MAP['ymax'] + self.MAP['res'], self.MAP['res'])
         x_range = np.arange(-0.4, 0.4 + 0.1, 0.1)
         y_range = np.arange(-0.4, 0.4 + 0.1, 0.1)
-        d_theta = pi/144
+        d_theta = pi/72
         correlations = np.zeros([particles.shape[0]])
-        # TODO: Fix this mess
         for idx, part in enumerate(particles):
             best_x = 0
             best_y = 0
@@ -215,13 +212,13 @@ class PoseUpdate:
                 z = np.stack((z_world[0], z_world[1]))
                 corr = mapCorrelation(self.MAP["map"], x_im, y_im, z, x_range, y_range)
                 x_cell, y_cell = np.unravel_index(np.argmax(corr, axis=None), corr.shape)
+
                 x, y = self.cell_to_point(x_cell, y_cell)
-                # TODO: Currently only checking corr at current cell (no pose update)
                 weight = corr[y_cell][x_cell]
                 if theta == 0:
                     main_corr = corr[4][4]
                     correlations[idx] = corr[4][4]
-                if weight > max_corr_theta and weight > 100*main_corr:  # New point has to have x times the corr as current
+                if weight > max_corr_theta and weight > 1.2*main_corr:  # New point has to have x times the corr as current
                     max_corr_theta = weight
                     correlations[idx] = weight
                     best_x = x
@@ -249,8 +246,8 @@ class PoseUpdate:
     def resample(self, particles, best_particle, new_weights):  # Normalizes and possibly resamples
         norm = sum(new_weights)
         s = 0
-        for p in particles:
-            p.weight = p.weight/norm
+        for i, p in enumerate(particles):
+            p.weight = new_weights[i]/norm
             s += pow(p.weight, 2)
         N_eff = 1/s
         if N_eff < self.N_thresh:
@@ -258,8 +255,37 @@ class PoseUpdate:
             particles[:] = best_particle
 
 class TextureMapper:
-    def __init__(self):
+    def __init__(self, kinect):
+
+        self.kinect = kinect
+        self.rotation = np.array([helpers.rotation_matrix(roll=0, pitch=0.36, yaw=0.021)])
+        self.translation = np.array([0.18, 0.005, 0.36])
+        self.camera_body_transform = np.vstack((np.hstack((self.rotation, self.translation)), [0, 0, 0, 1]))
+        self.intrinsics = np.linalg.inv(np.array([[585.05108211, 0, 242.94140713], [0, 585.05108211, 315.83800193], [0, 0, 1]]))
+        self.canonical = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 0]])
+
         self.MAP = 0
+
+    def disparity_to_depth(self, d):
+        dd = -0.00304 * d + 3.31
+        depth = 1.03/dd
+        return depth
+
+    def ir_to_rgb(self, i, j, depth):
+        rgbi = (i * 526.37 + depth/1.03 * -4.5 * 1750.46 + 19276.0)/585.051
+        rgbj = (j * 526.37 + 16662)/585.051
+        return rgbi, rgbj
+
+    def pixel_to_camera_frame(self, i, j, depth):
+        pixel = np.array([i, j, 1])
+        coords = np.matmul(self.intrinsics, pixel)
+        coords2 = np.dot(self.intrinsics, pixel)
+        print(np.array_equal(coords, coords2))
+        return coords
+
+
+    def test(self):
+        print(self.transform)
 
 
 
@@ -275,10 +301,10 @@ class Particle:
 
 
     def generate_transform(self):
-        t_1 = [cos(self.pose[2]), -sin(self.pose[2]), self.pose[0]]
-        t_2 = [sin(self.pose[2]), cos(self.pose[2]), self.pose[1]]
-        t_3 = [0, 0, 1]
-        return np.array([t_1, t_2, t_3])
+        t1 = [cos(self.pose[2]), -sin(self.pose[2]), self.pose[0]]
+        t2 = [sin(self.pose[2]), cos(self.pose[2]), self.pose[1]]
+        t3 = [0, 0, 1]
+        return np.array([t1, t2, t3])
 
 if __name__ == "__main__":
     # TODO: Time is not sequential, but epoch time => FIX
@@ -294,11 +320,13 @@ if __name__ == "__main__":
 
     N = 1
     mapper = Mapper(lidar)
-    current_map = mapper.MAP
+    texture_mapper = TextureMapper(kinect)
+
     predictor = PosePredictor(imu, encoder)
     updater = PoseUpdate(lidar)
     particles = np.array([Particle(weight=1/N) for i in range(N)])
     best_particle = particles[0]
+    current_map = mapper.MAP
 
     counter = 0
     for reading in readings:#encoder["encoder_counts"].shape[1]-30):
@@ -307,17 +335,18 @@ if __name__ == "__main__":
             # if counter > 1000:
             #     break
             counter += 1
-            current_map = mapper.mapping(reading[0], best_particle)
+            current_map = mapper.MAP
             particles, best_particle = updater.weighting(reading[0], particles, current_map)
+            updated_map = mapper.mapping(reading[0], best_particle)
         else:  # Particles remain unchanged if t is an IMU reading, waits for encoder
             for idx, p in enumerate(particles):
                 particles[idx] = predictor.pose_t_plus_one(reading, particles[idx])  # Might use best_particle
-        best_particle = particles[0]
         predictor.best_trajectory(best_particle)
         mapper.decay()
 
-    helpers.plot(mapper.MAP, "log_odds.png")
-    helpers.plot(predictor.MAP, "trajectory.png")
+
+    helpers.plot(mapper.MAP, "log_odds2.png")
+    helpers.plot(predictor.MAP, "trajectory2.png")
 
 
 

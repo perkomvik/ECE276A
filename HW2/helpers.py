@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import math
-
+from math import *
 
 def softmax(x):
     e_x = np.exp(x - np.max(x))
@@ -15,7 +14,10 @@ def transformation(points, transform):
     return transformed_points[:2]
 
 def rotation_matrix(roll, pitch, yaw):
-    r1 = [roll]
+    r1 = [cos(yaw)*cos(pitch), cos(yaw)*sin(pitch)*sin(roll) - sin(yaw)*cos(roll), cos(yaw)*sin(pitch)*cos(roll) + sin(yaw)*sin(roll)]
+    r2 = [sin(yaw)*cos(pitch), sin(yaw)*sin(pitch)*sin(roll) + cos(yaw)*cos(roll), sin(yaw)*sin(pitch)*cos(roll) - cos(yaw)*sin(roll)]
+    r3 = [-sin(pitch), cos(pitch)*sin(roll), cos(pitch)*cos(roll)]
+    np.array([r1, r2, r3])
 
 def lidar_ranges_to_points(ranges, angles):
     valid_ranges = np.logical_and((ranges < 30), (ranges > 0.1))

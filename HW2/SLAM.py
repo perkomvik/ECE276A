@@ -5,6 +5,7 @@ from scipy import signal
 import helpers
 import copy
 from operator import itemgetter
+from datetime import datetime
 
 exec(open("load_data.py").read())
 
@@ -52,8 +53,8 @@ class Mapper:
         self.MAP["sizey"] = int(np.ceil((self.MAP["ymax"] - self.MAP["ymin"]) / self.MAP["res"] + 1))
         self.MAP["map"] = np.zeros((self.MAP["sizex"], self.MAP["sizey"]))
         self.current_cell = self.points_to_cells(0, 0)
-        self.trust = log(4)
-        self.threshold = 15
+        self.trust = log(2)
+        self.threshold = 10
 
     def points_to_cells(self, x, y):
         x = np.ceil((x - self.MAP['xmin']) / self.MAP['res']).astype(np.int16) - 1
@@ -105,6 +106,7 @@ class PosePredictor:
         self.MAP["sizex"] = int(np.ceil((self.MAP["xmax"] - self.MAP["xmin"]) / self.MAP["res"] + 1))
         self.MAP["sizey"] = int(np.ceil((self.MAP["ymax"] - self.MAP["ymin"]) / self.MAP["res"] + 1))
         self.MAP["map"] = np.zeros((self.MAP["sizex"], self.MAP["sizey"]))
+        self.trajectory = []
 
     def pose_t_plus_one(self, t, particle):  # New predicted pose with noise added
         # TODO: Fix sync between imu and lidar
@@ -154,8 +156,9 @@ class PosePredictor:
         y = np.ceil((y - self.MAP['ymin']) / self.MAP['res']).astype(np.int16) - 1
         return x, y
 
-    def best_trajectory(self, particle):
+    def best_trajectory(self, particle, t):
         x, y = self.points_to_cells(particle.pose[0], particle.pose[1])
+        self.trajectory.append((particle.pose, t))
         self.MAP["map"][x, y] = 1
 
     def test(self, particle):
@@ -168,7 +171,7 @@ class PosePredictor:
             y[i] = new_particle.pose[1]
         x, y = self.points_to_cells(x, y)
         self.MAP["map"][x, y] = 1
-        self.plot(self.MAP)
+        helpers.plot(self.MAP)
         return True
 
 class PoseUpdate:
@@ -177,8 +180,19 @@ class PoseUpdate:
         self.ranges = lidar["lidar_ranges"]
         self.angles = np.arange(-135, 135.25, 0.25) * np.pi / 180.0
         self.transform_lidar_body = np.array([[1, 0, -0.0029833/2], [0, 1, 0], [0, 0, 1]])
-        self.MAP = None
         self.N_thresh = 1.1
+
+        self.MAP = {
+            "res":     0.1,
+            "xmin":    -35,
+            "ymin":    -35,
+            "xmax":     35,
+            "ymax":     35,
+        }
+        self.MAP["sizex"] = int(np.ceil((self.MAP["xmax"] - self.MAP["xmin"]) / self.MAP["res"] + 1))
+        self.MAP["sizey"] = int(np.ceil((self.MAP["ymax"] - self.MAP["ymin"]) / self.MAP["res"] + 1))
+        self.MAP["map"] = np.zeros((self.MAP["sizex"], self.MAP["sizey"]))
+
 
     def cell_to_point(self, x, y): # x=4, y=4 => 0, 0
         x = (x-4) * self.MAP["res"]*0.25
@@ -218,7 +232,7 @@ class PoseUpdate:
                 if theta == 0:
                     main_corr = corr[4][4]
                     correlations[idx] = corr[4][4]
-                if weight > max_corr_theta and weight > 1.2*main_corr:  # New point has to have x times the corr as current
+                if weight > max_corr_theta and weight > 10000*main_corr:  # New point has to have x times the corr as current
                     max_corr_theta = weight
                     correlations[idx] = weight
                     best_x = x
@@ -233,7 +247,7 @@ class PoseUpdate:
         largest_weight = 0
         current_best_particle = Particle()
         for idx, part in enumerate(particles):
-            part.weight = part.weight*correlations[idx]
+            part.weight = correlations[idx]
             new_weights[idx] = part.weight
             if part.weight > largest_weight:
                 largest_weight = part.weight
@@ -258,12 +272,13 @@ class TextureMapper:
     def __init__(self, kinect):
 
         self.kinect = kinect
-        self.rotation = np.array([helpers.rotation_matrix(roll=0, pitch=0.36, yaw=0.021)])
+        self.rotation = helpers.rotation_matrix(roll=0, pitch=0.36, yaw=0.021)
         self.translation = np.array([0.18, 0.005, 0.36])
-        self.camera_body_transform = np.vstack((np.hstack((self.rotation, self.translation)), [0, 0, 0, 1]))
+        self.translation.shape = (3, 1)
+        self.T_bc = np.vstack((np.hstack((self.rotation, self.translation)), [0, 0, 0, 1]))
         self.intrinsics = np.linalg.inv(np.array([[585.05108211, 0, 242.94140713], [0, 585.05108211, 315.83800193], [0, 0, 1]]))
         self.canonical = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 0]])
-
+        self.R_co = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]])
         self.MAP = 0
 
     def disparity_to_depth(self, d):
@@ -276,16 +291,22 @@ class TextureMapper:
         rgbj = (j * 526.37 + 16662)/585.051
         return rgbi, rgbj
 
-    def pixel_to_camera_frame(self, i, j, depth):
+    def pixel_to_body(self, i, j, depth):
         pixel = np.array([i, j, 1])
-        coords = np.matmul(self.intrinsics, pixel)
-        coords2 = np.dot(self.intrinsics, pixel)
-        print(np.array_equal(coords, coords2))
-        return coords
+        optical_frame = depth * np.dot(self.intrinsics, pixel)
+        regular_frame = np.dot(self.R_co, optical_frame)
+        body_frame = np.dot(self.T_bc, np.append(regular_frame, 1))
+        return body_frame
 
 
-    def test(self):
-        print(self.transform)
+    def test(self, p):
+        p1 = self.pixel_to_body(243, 316, 2)
+        p2 = self.pixel_to_body(243, 316, 1)
+        transform = p.transform_3d()
+        print(p1.shape)
+        world = helpers.transformation_3d(p1, transform)
+        print(world)
+
 
 
 
@@ -306,8 +327,14 @@ class Particle:
         t3 = [0, 0, 1]
         return np.array([t1, t2, t3])
 
+    def transform_3d(self):
+        t1 = [self.transform[0][0], self.transform[0][1], 0, self.transform[0][2]]
+        t2 = [self.transform[1][0], self.transform[1][1], 0, self.transform[1][2]]
+        t3 = np.append(self.transform[2], 0.254/2)
+        t4 = [0, 0, 0, 1]
+        return np.array([t1, t2, t3, t4])
+
 if __name__ == "__main__":
-    # TODO: Time is not sequential, but epoch time => FIX
     seq = ([i for i in range(lidar["lidar_stamps"].shape[0])] +
            [i for i in range(encoder["encoder_stamps"].shape[0])]+
            [i for i in range(imu["imu_stamps"].shape[0])])
@@ -318,35 +345,53 @@ if __name__ == "__main__":
     readings = list(zip(seq, stamps, source))
     readings = sorted(readings, key=itemgetter(1))
 
-    N = 1
     mapper = Mapper(lidar)
     texture_mapper = TextureMapper(kinect)
-
     predictor = PosePredictor(imu, encoder)
     updater = PoseUpdate(lidar)
-    particles = np.array([Particle(weight=1/N) for i in range(N)])
-    best_particle = particles[0]
-    current_map = mapper.MAP
 
-    counter = 0
-    for reading in readings:#encoder["encoder_counts"].shape[1]-30):
-        if reading[2] == "lidar":
-            print(counter)
-            # if counter > 1000:
-            #     break
-            counter += 1
-            current_map = mapper.MAP
-            particles, best_particle = updater.weighting(reading[0], particles, current_map)
-            updated_map = mapper.mapping(reading[0], best_particle)
-        else:  # Particles remain unchanged if t is an IMU reading, waits for encoder
-            for idx, p in enumerate(particles):
-                particles[idx] = predictor.pose_t_plus_one(reading, particles[idx])  # Might use best_particle
-        predictor.best_trajectory(best_particle)
-        mapper.decay()
+    task = "texture_map"
+
+    if task == "slam":
+        N = 1
+        particles = np.array([Particle(weight=1 / N) for i in range(N)])
+        best_particle = particles[0]
+        current_map = mapper.MAP
+        counter = 0
+        for reading in readings:
+            if reading[2] == "lidar":
+                print(counter)
+                # if counter > 1000:
+                #     break
+                counter += 1
+                current_map = mapper.MAP
+                particles, best_particle = updater.weighting(reading[0], particles, current_map)
+                updated_map = mapper.mapping(reading[0], best_particle)
+            else:
+                for idx, p in enumerate(particles): # Particles remain unchanged if t is an IMU reading, waits for encoder to update
+                    particles[idx] = predictor.pose_t_plus_one(reading, particles[idx])
+            if reading[2] == "encoder":
+                predictor.best_trajectory(best_particle, reading[1])
+            mapper.decay()
+        np.save("pose_trajectory.npy", np.array(predictor.trajectory))
+        np.save("occupancy_grid.npy", np.array(updater.MAP["map"]))
+        helpers.plot(mapper.MAP, "log_odds2.png")
+
+    elif task == "texture_map":
+        predictor.trajectory = np.load("pose_trajectory.npy")
+        particle = Particle()
+        for t in predictor.trajectory:
+            particle.pose = t[0]
+            time_stamp = t[1]
+
+        # updater.MAP["map"] = np.load("occupancy_grid.npy")
+        # for item in predictor.trajectory:
+        #     x, y = predictor.points_to_cells(item[0][0], item[0][1])
+        #     predictor.MAP["map"][x, y] = 1
+        # helpers.plot(predictor.MAP, "trajectory2.png")
+        # helpers.plot(updater.MAP, "occupancy.png")
 
 
-    helpers.plot(mapper.MAP, "log_odds2.png")
-    helpers.plot(predictor.MAP, "trajectory2.png")
 
 
 

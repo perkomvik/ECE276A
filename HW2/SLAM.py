@@ -7,6 +7,7 @@ import copy
 import cv2
 from PIL import Image
 from matplotlib import cm
+import pandas as pd
 from operator import itemgetter
 from datetime import datetime
 
@@ -293,31 +294,35 @@ class TextureMapper:
         depth = 1.03/dd
         return depth
 
-    def ir_to_rgb(self, i, j, d):
-        depth = self.disparity_to_depth(d)
-        rgbi = (i * 526.37 + 1.03/depth * -4.5 * 1750.46 + 19276.0)/585.051
-        rgbj = (j * 526.37 + 16662)/585.051
+    def ir_to_rgb(self, indeces, disps):
+        depth = self.disparity_to_depth(disps)
+        rgbi = (indeces[1] * 526.37 + 1.03/depth * -4.5 * 1750.46 + 19276.0)/585.051
+        rgbj = (indeces[0] * 526.37 + 16662)/585.051
         return rgbi, rgbj
 
-    def pixel_to_body(self, u, v, d):
+    def pixel_to_body(self, A):
+        A = self.disparity_to_depth(A)
+        A[A <= 0.05] = -1000000
+        pixels = np.array([[np.array([j, i, 1]) for j in range(A.shape[1])] for i in range(A.shape[0])])
+        func = lambda x: np.dot(self.intrinsics, x)
+        B = np.array([[func(elem) for elem in pixels[i]]for i in range(pixels.shape[0])])
+        C = np.einsum('ij,ijk->ijk', A, B)
+        func2 = lambda x: np.dot(self.R_co, x)
+        D = np.array([[func2(elem) for elem in C[i]] for i in range(C.shape[0])])
+        E = np.dstack((D, np.ones((480, 640))))
+        func3 = lambda x: np.dot(self.T_bc, x)
+        body_frame = np.array([[func3(elem) for elem in E[i]] for i in range(E.shape[0])])
+        return body_frame
+
+    def pixel_to_body2(self, u, v, d):
         depth = self.disparity_to_depth(d)
         if depth < 0.05:
-            return np.array([0, 0, 0, 0])
+            return np.array([0, 0, 1000, 0])
         pixel = np.array([u, v, 1])
-        optical_frame = depth * np.dot(self.intrinsics, pixel)
+        optical_frame = depth*np.dot(self.intrinsics, pixel)
         regular_frame = np.dot(self.R_co, optical_frame)
         body_frame = np.dot(self.T_bc, np.append(regular_frame, 1))
         return body_frame
-
-
-    def test(self, p):
-        p1 = self.pixel_to_body(10, 10, 2)
-        p2 = self.pixel_to_body(300, 400, 1)
-        transform = p.transform_3d()
-        print(p1)
-        world = helpers.transformation_3d(p1, transform)
-        print(world)
-
 
 
 
@@ -396,34 +401,47 @@ if __name__ == "__main__":
         im = Image.fromarray(np.uint8(cm.gist_earth(occupancy_grid)*255))
         im.save("texture_map.png")
         texture_map = cv2.imread("texture_map.png")
-        counter = 0
         particle = Particle()
         timestamps = [x[1] for x in predictor.trajectory]
+        counter = 0
         for i, t in enumerate(kinect["disp_stamps"]):
-            if i % 10 != 0:
+            if i%1 != 0:
                 continue
-            if counter >= 50:
+            if counter == 2000:
                 break
             counter += 1
-            print(i)
             idx = (np.abs(timestamps - t)).argmin()
             particle.pose = predictor.trajectory[idx][0]
             particle.transform = particle.generate_transform()
+            print("img: " + str(i+1))
             disp_img = cv2.imread(
                 "dataRGBD/Disparity" + str(dataset) + "/disparity" + str(dataset) + "_" + str(i+1) + ".png", -1)
             rgb_img = cv2.imread("dataRGBD/RGB"+str(dataset)+"/rgb"+str(dataset)+"_"+str(i+1)+".png")
-            print("img: " + str(i+1))
-            for v, row in enumerate(disp_img[350:]):  # Starts at upper left
-                for u, disp in enumerate(row):
-                    coord = texture_mapper.pixel_to_body(u, v+350, disp)
-                    if coord.any():
-                        if coord[2] < 0.3:
-                            rgbi, rgbj = np.floor(texture_mapper.ir_to_rgb(u, v+350, disp)).astype(int)  # i,j starts in bottom left
-                            color = rgb_img[rgbj][rgbi]
-                            x, y = helpers.transformation(([coord[0]], [coord[1]]), particle.transform)
-                            x, y = predictor.points_to_cells(x[0], y[0])
-                            texture_map[x][y] = np.flip(color)
-        print(2)
+
+            coords = texture_mapper.pixel_to_body(disp_img)
+            coords[coords[:, :, 2] < 0] = 10
+            idx = np.array(np.where(coords[:, :, 2] < 0.2))
+            A = disp_img[idx[0], idx[1]]
+            rgbi, rgbj = np.floor(texture_mapper.ir_to_rgb(idx, A)).astype(int)
+
+            color = rgb_img[rgbj, rgbi]
+            points_body = coords[idx[0], idx[1]]
+            points_world = helpers.transformation((points_body[:, 0], points_body[:, 1]), particle.transform)
+            cells = predictor.points_to_cells(points_world[0], points_world[1])
+            texture_map[cells[0], cells[1]] = np.flip(color, 1)
+
+            # counter2 = 0
+            # for v, row in enumerate(disp_img):  # Starts at upper left
+            #     for u, disp in enumerate(row):
+            #         coord = texture_mapper.pixel_to_body2(u, v, disp)
+            #         if coord[2] < 0.1:
+            #             counter2 += 1
+                        #   # i,j starts in bottom left
+                        #
+                        # x, y = helpers.transformation(([coord[0]], [coord[1]]), particle.transform)
+                        # x, y = predictor.points_to_cells(x[0], y[0])
+                        # texture_map[x][y] = np.flip(color)
+            # print(counter2)
         plt.imsave("test.png", texture_map)
         plt.imshow(texture_map, cmap="hot")
         plt.show()

@@ -4,6 +4,9 @@ from map_utils import *
 from scipy import signal
 import helpers
 import copy
+import cv2
+from PIL import Image
+from matplotlib import cm
 from operator import itemgetter
 from datetime import datetime
 
@@ -193,6 +196,10 @@ class PoseUpdate:
         self.MAP["sizey"] = int(np.ceil((self.MAP["ymax"] - self.MAP["ymin"]) / self.MAP["res"] + 1))
         self.MAP["map"] = np.zeros((self.MAP["sizex"], self.MAP["sizey"]))
 
+    def points_to_cells(self, x, y):
+        x = np.ceil((x - self.MAP['xmin']) / self.MAP['res']).astype(np.int16) - 1
+        y = np.ceil((y - self.MAP['ymin']) / self.MAP['res']).astype(np.int16) - 1
+        return x, y
 
     def cell_to_point(self, x, y): # x=4, y=4 => 0, 0
         x = (x-4) * self.MAP["res"]*0.25
@@ -272,8 +279,8 @@ class TextureMapper:
     def __init__(self, kinect):
 
         self.kinect = kinect
-        self.rotation = helpers.rotation_matrix(roll=0, pitch=0.36, yaw=0.021)
-        self.translation = np.array([0.18, 0.005, 0.36])
+        self.rotation = np.linalg.inv(helpers.rotation_matrix(roll=0, pitch=0.36, yaw=0.021))
+        self.translation = np.array([0.18, 0.005, 0.36+0.254/2])
         self.translation.shape = (3, 1)
         self.T_bc = np.vstack((np.hstack((self.rotation, self.translation)), [0, 0, 0, 1]))
         self.intrinsics = np.linalg.inv(np.array([[585.05108211, 0, 242.94140713], [0, 585.05108211, 315.83800193], [0, 0, 1]]))
@@ -286,13 +293,17 @@ class TextureMapper:
         depth = 1.03/dd
         return depth
 
-    def ir_to_rgb(self, i, j, depth):
-        rgbi = (i * 526.37 + depth/1.03 * -4.5 * 1750.46 + 19276.0)/585.051
+    def ir_to_rgb(self, i, j, d):
+        depth = self.disparity_to_depth(d)
+        rgbi = (i * 526.37 + 1.03/depth * -4.5 * 1750.46 + 19276.0)/585.051
         rgbj = (j * 526.37 + 16662)/585.051
         return rgbi, rgbj
 
-    def pixel_to_body(self, i, j, depth):
-        pixel = np.array([i, j, 1])
+    def pixel_to_body(self, u, v, d):
+        depth = self.disparity_to_depth(d)
+        if depth < 0.05:
+            return np.array([0, 0, 0, 0])
+        pixel = np.array([u, v, 1])
         optical_frame = depth * np.dot(self.intrinsics, pixel)
         regular_frame = np.dot(self.R_co, optical_frame)
         body_frame = np.dot(self.T_bc, np.append(regular_frame, 1))
@@ -300,10 +311,10 @@ class TextureMapper:
 
 
     def test(self, p):
-        p1 = self.pixel_to_body(243, 316, 2)
-        p2 = self.pixel_to_body(243, 316, 1)
+        p1 = self.pixel_to_body(10, 10, 2)
+        p2 = self.pixel_to_body(300, 400, 1)
         transform = p.transform_3d()
-        print(p1.shape)
+        print(p1)
         world = helpers.transformation_3d(p1, transform)
         print(world)
 
@@ -330,21 +341,21 @@ class Particle:
     def transform_3d(self):
         t1 = [self.transform[0][0], self.transform[0][1], 0, self.transform[0][2]]
         t2 = [self.transform[1][0], self.transform[1][1], 0, self.transform[1][2]]
-        t3 = np.append(self.transform[2], 0.254/2)
+        t3 = np.append(self.transform[2], 0)
         t4 = [0, 0, 0, 1]
         return np.array([t1, t2, t3, t4])
 
 if __name__ == "__main__":
-    seq = ([i for i in range(lidar["lidar_stamps"].shape[0])] +
-           [i for i in range(encoder["encoder_stamps"].shape[0])]+
-           [i for i in range(imu["imu_stamps"].shape[0])])
-    source = (["lidar" for i in range(lidar["lidar_stamps"].shape[0])] +
-              ["encoder" for i in range(encoder["encoder_stamps"].shape[0])] +
-              ["imu" for i in range(imu["imu_stamps"].shape[0])])
-    stamps = np.concatenate([lidar["lidar_stamps"], encoder["encoder_stamps"], imu["imu_stamps"]])
-    readings = list(zip(seq, stamps, source))
-    readings = sorted(readings, key=itemgetter(1))
-
+    # seq = ([i for i in range(lidar["lidar_stamps"].shape[0])] +
+    #        [i for i in range(encoder["encoder_stamps"].shape[0])]+
+    #        [i for i in range(imu["imu_stamps"].shape[0])])
+    # source = (["lidar" for i in range(lidar["lidar_stamps"].shape[0])] +
+    #           ["encoder" for i in range(encoder["encoder_stamps"].shape[0])] +
+    #           ["imu" for i in range(imu["imu_stamps"].shape[0])])
+    # stamps = np.concatenate([lidar["lidar_stamps"], encoder["encoder_stamps"], imu["imu_stamps"]])
+    # readings = list(zip(seq, stamps, source))
+    # readings = sorted(readings, key=itemgetter(1))
+    #
     mapper = Mapper(lidar)
     texture_mapper = TextureMapper(kinect)
     predictor = PosePredictor(imu, encoder)
@@ -379,10 +390,45 @@ if __name__ == "__main__":
 
     elif task == "texture_map":
         predictor.trajectory = np.load("pose_trajectory.npy")
+        occupancy_grid = np.load("occupancy_grid.npy")
+        n_channels = 3
+        size = updater.MAP["map"].shape[0]
+        im = Image.fromarray(np.uint8(cm.gist_earth(occupancy_grid)*255))
+        im.save("texture_map.png")
+        texture_map = cv2.imread("texture_map.png")
+        counter = 0
         particle = Particle()
-        for t in predictor.trajectory:
-            particle.pose = t[0]
-            time_stamp = t[1]
+        timestamps = [x[1] for x in predictor.trajectory]
+        for i, t in enumerate(kinect["disp_stamps"]):
+            if i % 10 != 0:
+                continue
+            if counter >= 50:
+                break
+            counter += 1
+            print(i)
+            idx = (np.abs(timestamps - t)).argmin()
+            particle.pose = predictor.trajectory[idx][0]
+            particle.transform = particle.generate_transform()
+            disp_img = cv2.imread(
+                "dataRGBD/Disparity" + str(dataset) + "/disparity" + str(dataset) + "_" + str(i+1) + ".png", -1)
+            rgb_img = cv2.imread("dataRGBD/RGB"+str(dataset)+"/rgb"+str(dataset)+"_"+str(i+1)+".png")
+            print("img: " + str(i+1))
+            for v, row in enumerate(disp_img[350:]):  # Starts at upper left
+                for u, disp in enumerate(row):
+                    coord = texture_mapper.pixel_to_body(u, v+350, disp)
+                    if coord.any():
+                        if coord[2] < 0.3:
+                            rgbi, rgbj = np.floor(texture_mapper.ir_to_rgb(u, v+350, disp)).astype(int)  # i,j starts in bottom left
+                            color = rgb_img[rgbj][rgbi]
+                            x, y = helpers.transformation(([coord[0]], [coord[1]]), particle.transform)
+                            x, y = predictor.points_to_cells(x[0], y[0])
+                            texture_map[x][y] = np.flip(color)
+        print(2)
+        plt.imsave("test.png", texture_map)
+        plt.imshow(texture_map, cmap="hot")
+        plt.show()
+
+
 
         # updater.MAP["map"] = np.load("occupancy_grid.npy")
         # for item in predictor.trajectory:

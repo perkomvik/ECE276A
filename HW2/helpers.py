@@ -35,7 +35,7 @@ def lidar_ranges_to_points(ranges, angles):
 def exectime(t):
     dt = datetime.now()
     dt = dt.microsecond
-    print(str(dt-t) + " ms")
+    print(str(dt-t) + " µs")
 
 
 

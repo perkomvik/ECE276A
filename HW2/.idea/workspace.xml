@@ -14,11 +14,11 @@
   </component>
   <component name="FileEditorManager">
     <leaf SIDE_TABS_SIZE_LIMIT_KEY="300">
-      <file pinned="false" current-in-tab="true">
+      <file pinned="false" current-in-tab="false">
         <entry file="file://$PROJECT_DIR$/SLAM.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="310">
-              <caret line="406" column="24" lean-forward="true" selection-start-line="406" selection-start-column="24" selection-end-line="406" selection-end-column="24" />
+            <state relative-caret-position="309">
+              <caret line="434" column="40" selection-start-line="434" selection-start-column="40" selection-end-line="434" selection-end-column="40" />
               <folding>
                 <element signature="e#0#18#0" expanded="true" />
                 <element signature="e#12859#13559#0" />
@@ -29,7 +29,7 @@
           </provider>
         </entry>
       </file>
-      <file pinned="false" current-in-tab="false">
+      <file pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/test.png">
           <provider selected="true" editor-type-id="images" />
         </entry>
@@ -379,16 +379,13 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/test.png">
-      <provider selected="true" editor-type-id="images" />
-    </entry>
     <entry file="file://$PROJECT_DIR$/texture_map.png">
       <provider selected="true" editor-type-id="images" />
     </entry>
     <entry file="file://$PROJECT_DIR$/SLAM.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="310">
-          <caret line="406" column="24" lean-forward="true" selection-start-line="406" selection-start-column="24" selection-end-line="406" selection-end-column="24" />
+        <state relative-caret-position="309">
+          <caret line="434" column="40" selection-start-line="434" selection-start-column="40" selection-end-line="434" selection-end-column="40" />
           <folding>
             <element signature="e#0#18#0" expanded="true" />
             <element signature="e#12859#13559#0" />
@@ -397,6 +394,9 @@
           </folding>
         </state>
       </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/test.png">
+      <provider selected="true" editor-type-id="images" />
     </entry>
   </component>
 </project>

@@ -5,7 +5,7 @@ from datetime import datetime
 
 def softmax(x):
     e_x = np.exp(x - np.max(x))
-    return e_x / e_x.sum(axis=0)
+    return e_x / e_x.sum()
 
 def transformation(points, transform):
     ones = np.ones(len(points[0]))
@@ -25,7 +25,7 @@ def rotation_matrix(roll, pitch, yaw):
     return np.array([r1, r2, r3])
 
 def lidar_ranges_to_points(ranges, angles):
-    valid_ranges = np.logical_and((ranges < 30), (ranges > 0.1))
+    valid_ranges = np.logical_and((ranges < 25), (ranges > 0.1))
     ranges = ranges[valid_ranges]
     angles = angles[valid_ranges]
     x = ranges * np.cos(angles)
@@ -37,9 +37,9 @@ def exectime(t):
     dt = dt.microsecond
     print(str(dt-t) + " µs")
 
-
-
 def plot(MAP, filename):
     plt.interactive(False)
     plt.figure()
     plt.imsave(filename, MAP["map"], cmap="gray")
+    plt.imshow(MAP["map"], cmap="gray")
+    plt.show()

@@ -1,6 +1,9 @@
 # Files/folders
 dataRGBD/
 data/
+npy/
+*.gif
+*.npy
 *.txt
 
 

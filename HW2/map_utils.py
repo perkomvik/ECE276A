@@ -11,37 +11,36 @@ def toc(tstart, name="Operation"):
 
 
 def mapCorrelation(im, x_im, y_im, vp, xs, ys):
-  '''
-  INPUT 
-  im              the map 
-  x_im,y_im       physical x,y positions of the grid map cells
-  vp[0:2,:]       occupied x,y positions from range sensor (in physical unit)  
-  xs,ys           physical x,y,positions you want to evaluate "correlation" 
+    '''
+    INPUT
+    im              the map
+    x_im,y_im       physical x,y positions of the grid map cells
+    vp[0:2,:]       occupied x,y positions from range sensor (in physical unit)
+    xs,ys           physical x,y,positions you want to evaluate "correlation"
 
-  OUTPUT 
-  c               sum of the cell values of all the positions hit by range sensor
-  '''
-  nx = im.shape[0]
-  ny = im.shape[1]
-  xmin = x_im[0]
-  xmax = x_im[-1]
-  xresolution = (xmax-xmin)/(nx-1)
-  ymin = y_im[0]
-  ymax = y_im[-1]
-  yresolution = (ymax-ymin)/(ny-1)
-  nxs = xs.size
-  nys = ys.size
-  cpr = np.zeros((nxs, nys))
-  for jy in range(0,nys):
-    y1 = vp[1,:] + ys[jy] # 1 x 1076
-    iy = np.int16(np.round((y1-ymin)/yresolution))
-    for jx in range(0,nxs):
-      x1 = vp[0,:] + xs[jx] # 1 x 1076
-      ix = np.int16(np.round((x1-xmin)/xresolution))
-      valid = np.logical_and( np.logical_and((iy >=0), (iy < ny)), \
-			                        np.logical_and((ix >=0), (ix < nx)))
-      cpr[jx,jy] = np.sum(im[ix[valid],iy[valid]])
-  return cpr
+    OUTPUT
+    c               sum of the cell values of all the positions hit by range sensor
+    '''
+    nx = im.shape[0]
+    ny = im.shape[1]
+    xmin = x_im[0]
+    xmax = x_im[-1]
+    xresolution = (xmax-xmin)/(nx-1)
+    ymin = y_im[0]
+    ymax = y_im[-1]
+    yresolution = (ymax-ymin)/(ny-1)
+    nxs = xs.size
+    nys = ys.size
+    cpr = np.zeros((nxs, nys))
+    for jy in range(0, nys):
+      y1 = vp[1, :] + ys[jy]  # 1 x 1076
+      iy = np.int16(np.round((y1-ymin)/yresolution))
+      for jx in range(0, nxs):
+        x1 = vp[0, :] + xs[jx]  # 1 x 1076
+        ix = np.int16(np.round((x1-xmin)/xresolution))
+        valid = np.logical_and(np.logical_and((iy >=0), (iy < ny)), np.logical_and((ix >=0), (ix < nx)))
+        cpr[jx,jy] = np.sum(im[ix[valid], iy[valid]])
+    return cpr
 
 
 def bresenham2D(sx, sy, ex, ey):
@@ -126,24 +125,27 @@ def test_mapCorrelation():
   MAP['sizex']  = int(np.ceil((MAP['xmax'] - MAP['xmin']) / MAP['res'] + 1)) #cells
   MAP['sizey']  = int(np.ceil((MAP['ymax'] - MAP['ymin']) / MAP['res'] + 1))
   MAP['map'] = np.zeros((MAP['sizex'],MAP['sizey']),dtype=np.int8) #DATA TYPE: char or int8
-  
 
-  
+
+
   # xy position in the sensor frame
   xs0 = ranges*np.cos(angles)
   ys0 = ranges*np.sin(angles)
   
-  # convert position in the map frame here 
+  # convert position in the map frame here
+
+  xs0 = np.array([0.05])
+  ys0 = np.array([0])
   Y = np.stack((xs0, ys0))
   
   # convert from meters to cells
   xis = np.ceil((xs0 - MAP['xmin']) / MAP['res'] ).astype(np.int16)-1
   yis = np.ceil((ys0 - MAP['ymin']) / MAP['res'] ).astype(np.int16)-1
-  
+
   # build an arbitrary map 
   indGood = np.logical_and(np.logical_and(np.logical_and((xis > 1), (yis > 1)), (xis < MAP['sizex'])), (yis < MAP['sizey']))
-  MAP['map'][xis[indGood[0]],yis[indGood[0]]]=1
-
+  MAP['map'][xis, yis]=1
+  Y = np.stack((np.array([0]), ys0))
 
   #import pdb
   #pdb.set_trace()
@@ -151,15 +153,17 @@ def test_mapCorrelation():
   x_im = np.arange(MAP['xmin'],MAP['xmax']+MAP['res'],MAP['res']) #x-positions of each pixel of the map
   y_im = np.arange(MAP['ymin'],MAP['ymax']+MAP['res'],MAP['res']) #y-positions of each pixel of the map
 
-  x_range = np.arange(-0.2,0.2+0.05,0.05)
-  y_range = np.arange(-0.2,0.2+0.05,0.05)
+  x_range = np.arange(-0.2, 0.2+0.05, 0.05)
+  y_range = np.arange(-0.2, 0.2+0.05, 0.05)
 
 
   
   print("Testing map_correlation with {}x{} cells".format(MAP['sizex'],MAP['sizey']))
   ts = tic()
   c = mapCorrelation(MAP['map'],x_im,y_im,Y,x_range,y_range)
+  print(c)
   toc(ts,"Map Correlation")
+  return
 
   c_ex = np.array([[3,4,8,162,270,132,18,1,0],
 		  [25  ,1   ,8   ,201  ,307 ,109 ,5  ,1   ,3],
@@ -174,12 +178,11 @@ def test_mapCorrelation():
   if np.sum(c==c_ex) == np.size(c_ex):
 	  print("...Test passed.")
   else:
-	  print("...Test failed. Close figures to continue tests.")	
-
+	  print("...Test failed. Close figures to continue tests.")
   #plot original lidar points
   fig1 = plt.figure()
   plt.plot(xs0,ys0,'.k')
-
+  print(MAP["map"][485][465])
   #plot map
   fig2 = plt.figure()
   plt.imshow(MAP['map'],cmap="hot");

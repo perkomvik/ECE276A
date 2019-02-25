@@ -2,8 +2,8 @@ import numpy as np
 
 
 if __name__ == '__main__':
-  dataset = 20
-  
+  dataset = 21
+
   with np.load("Encoders%d.npz"%dataset) as data:
     encoder_counts = data["counts"] # 4 x n encoder counts
     encoder_stamps = data["time_stamps"] # encoder time stamps
@@ -21,8 +21,8 @@ if __name__ == '__main__':
     imu_angular_velocity = data["angular_velocity"] # angular velocity in rad/sec
     imu_linear_acceleration = data["linear_acceleration"] # Accelerations in gs (gravity acceleration scaling)
     imu_stamps = data["time_stamps"]  # acquisition times of the imu measurements
-  
-  with np.load("Kinect%d.npz"%dataset) as data:
-    disp_stamps = data["disparity_time_stamps"] # acquisition times of the disparity images
-    rgb_stamps = data["rgb_time_stamps"] # acquisition times of the rgb images
+  #
+  # with np.load("Kinect%d.npz"%dataset) as data:
+  #   disp_stamps = data["disparity_time_stamps"] # acquisition times of the disparity images
+  #   rgb_stamps = data["rgb_time_stamps"] # acquisition times of the rgb images
 

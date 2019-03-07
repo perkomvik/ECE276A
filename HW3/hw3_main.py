@@ -18,11 +18,10 @@ class Localizer:
 if __name__ == '__main__':
     filename = "./data/0042.npz"
     t, features, linear_velocity, rotational_velocity, K, b, cam_T_imu = load_data(filename)
+    # Features are [pixel coords left(x, y), pixel coords rightx(x,y) (starting in top left)][landmark number][timestep]
 
 # (a) IMU Localization via EKF Prediction
-
     l = Localizer(t, linear_velocity, rotational_velocity)
-
 
 # (b) Landmark Mapping via EKF Update
 

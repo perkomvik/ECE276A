@@ -1,6 +1,7 @@
 import numpy as np
 import math
 import timeit
+import copy
 from utils import *
 
 
@@ -10,13 +11,14 @@ class Localizer:
         self.t = t
         self.lin_vel = linear_velocity
         self.ang_vel = rotational_velocity
-        self.initial_pose = np.zeros(4)
+        self.initial_pose = np.zeros(6)
         self.mu = self.initial_pose     # Mean of state prediction
         self.sigma = np.eye(6)          # Variance of state prediction
         self.W = 1*np.eye(6)            # Variance of control input
-        self.transform = np.eye(4)#np.linalg.inv(pose_to_transform(self.mu))
+        self.transform = np.linalg.inv(pose_to_transform(self.mu))
         self.prev_t = t[0][0]
         self.trajectory = np.zeros((4, 4, t.shape[1]))
+        self.trajectory[:, :, 0] = np.eye(4)
 
     def prediction(self, timestep):
         current_t = self.t[0][timestep]
@@ -24,11 +26,11 @@ class Localizer:
         self.prev_t = current_t
         u = np.append(self.lin_vel[:, timestep], self.ang_vel[:, timestep])
         u_hat = hat(u)
-        exponent = matrix_exp(tau*u_hat)
+        exponent = matrix_exp(-tau*u_hat)
         new_transform = np.matmul(exponent, self.transform)
         self.transform = new_transform
-        # self.mu = transform_to_pose(new_transform)
-        self.trajectory[:, :, timestep] = new_transform
+        self.mu = transform_to_pose(new_transform)
+        self.trajectory[:, :, timestep] = np.linalg.inv(new_transform)
 
     def test(self):
         for i in range(1, t.shape[1]):
@@ -39,7 +41,7 @@ class Localizer:
 
 
 if __name__ == '__main__':
-    filename = "./data/0042.npz"
+    filename = "./data/0027.npz"
     t, features, linear_velocity, rotational_velocity, K, b, cam_T_imu = load_data(filename)
     # Features are [pixel coords left(x, y), pixel coords rightx(x,y) (starting in top left)][landmark number][timestep]
 

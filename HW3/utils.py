@@ -80,22 +80,27 @@ def visualize_trajectory_2d(pose, path_name="Unknown", show_ori=False):
 
 
 def pose_to_transform(pose):  # Pose in 6D space (3D position and orientation)
-    # TODO: Upgrade to full orientation, not just yaw
-    R = np.array([[math.cos(pose[3]), -math.sin(pose[3]), 0],
-                  [math.sin(pose[3]), math.cos(pose[3]), 0],
-                  [0, 0, 1]])
+    R = rotation_matrix(pose[3], pose[4], pose[5])
     p = np.array([pose[0], pose[1], pose[2]])
     T = np.c_[R, p]
     bot_row = np.array([0, 0, 0, 1])
     T = np.r_[T, [bot_row]]
     return T
 
+def rotation_matrix(roll, pitch, yaw):
+    r1 = [math.cos(yaw)*math.cos(pitch), math.cos(yaw)*math.sin(pitch)*math.sin(roll) + math.sin(yaw)*math.cos(roll),
+          -math.cos(yaw)*math.sin(pitch)*math.cos(roll) + math.sin(yaw)*math.sin(roll)]
+    r2 = [-math.sin(yaw)*math.cos(pitch), -math.sin(yaw)*math.sin(pitch)*math.sin(roll) + math.cos(yaw)*math.cos(roll),
+          math.sin(yaw)*math.sin(pitch)*math.cos(roll) + math.cos(yaw)*math.sin(roll)]
+    r3 = [math.sin(pitch), -math.cos(pitch)*math.sin(roll), math.cos(pitch)*math.cos(roll)]
+    return np.array([r1, r2, r3])
+
 
 def transform_to_pose(transform):
-    angle = math.acos(transform[0][0])
-    if transform[1][0] < -0.0001:  # Want multiples of 2pi to be zero rad.
-        angle = -angle
-    return np.append(transform[:3, 3], angle)
+    roll = np.arctan2(transform[2][1], transform[2][2])
+    pitch = np.arctan2(transform[2][0], math.sqrt(transform[2][1]**2+transform[2][2]**2))
+    yaw = np.arctan2(transform[1][0], transform[0][0])
+    return np.append(transform[:3, 3], np.array([roll, pitch, yaw]))
 
 
 def skew(v):    # Generate skew symmetric matrix from vector. Only works on 3x1 vector

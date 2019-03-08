@@ -132,5 +132,4 @@ def matrix_exp(matrix): # Computes a simple matrix exponential using only the fi
         raise Exception('The matrix has to be square, shape was {}'.format(shape))
     res = np.eye(shape[0])+matrix
     # res = scipy.linalg.expm(matrix)
-    # res = matrix
     return res

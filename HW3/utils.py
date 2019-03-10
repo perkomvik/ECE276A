@@ -45,7 +45,7 @@ def load_data(file_name):
     return t, features, linear_velocity, rotational_velocity, K, b, cam_T_imu
 
 
-def visualize_trajectory_2d(pose, path_name="Unknown", show_ori=False):
+def visualize_trajectory_2d(pose, points, path_name="Unknown", show_ori=False):
     '''
     function to visualize the trajectory in 2D
     Input:
@@ -55,6 +55,7 @@ def visualize_trajectory_2d(pose, path_name="Unknown", show_ori=False):
     '''
     fig, ax = plt.subplots(figsize=(5, 5))
     n_pose = pose.shape[2]
+    ax.plot(points[0, 3, :], points[1, 3, :], 'go', linestyle="None")
     ax.plot(pose[0, 3, :], pose[1, 3, :], 'r-', label=path_name)
     ax.scatter(pose[0, 3, 0], pose[1, 3, 0], marker='s', label="start")
     ax.scatter(pose[0, 3, -1], pose[1, 3, -1], marker='o', label="end")
@@ -74,7 +75,29 @@ def visualize_trajectory_2d(pose, path_name="Unknown", show_ori=False):
     ax.axis('equal')
     ax.grid(False)
     ax.legend()
-    plt.savefig("test.png")
+    plt.savefig("trajectory.png")
+    plt.show(block=False)
+    return fig, ax
+
+def visualize_landmarks_2d(pose, path_name="Unknown"):
+    '''
+    function to visualize the trajectory in 2D
+    Input:
+      pose:   4*4*N matrix representing the camera pose,
+              where N is the number of pose, and each
+              4*4 matrix is in SE(3)
+    '''
+    fig, ax = plt.subplots(figsize=(5, 5))
+    n_pose = pose.shape[2]
+    ax.plot(pose[0, 3, :], pose[1, 3, :], 'go', label=path_name, linestyle="None")
+    ax.scatter(pose[0, 3, 0], pose[1, 3, 0], marker='s', label="start")
+    ax.scatter(pose[0, 3, -1], pose[1, 3, -1], marker='o', label="end")
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.axis('equal')
+    ax.grid(False)
+    ax.legend()
+    plt.savefig("landmarks.png")
     plt.show(block=False)
     return fig, ax
 
@@ -82,6 +105,14 @@ def visualize_trajectory_2d(pose, path_name="Unknown", show_ori=False):
 def pose_to_transform(pose):  # Pose in 6D space (3D position and orientation)
     R = rotation_matrix(pose[3], pose[4], pose[5])
     p = np.array([pose[0], pose[1], pose[2]])
+    T = np.c_[R, p]
+    bot_row = np.array([0, 0, 0, 1])
+    T = np.r_[T, [bot_row]]
+    return T
+
+def point_to_transform_3d(point):
+    R = np.eye(3)
+    p = np.array([point[0], point[1], point[2]])
     T = np.c_[R, p]
     bot_row = np.array([0, 0, 0, 1])
     T = np.r_[T, [bot_row]]

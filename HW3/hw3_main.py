@@ -21,6 +21,7 @@ class Predictor:
         self.trajectory = np.zeros((4, 4, t.shape[1]))
         self.plot = np.zeros((4, 4, t.shape[1]))
         self.plot[:, :, 0] = np.eye(4)
+        self.trajectory[:, :, 0] = np.eye(4)
 
     def predict_pose(self, u, tau):  # Input: new IMU reading, output: prediction of next pose
         u_hat = hat(u)
@@ -58,7 +59,7 @@ class Predictor:
 class Updater:
     def __init__(self, t, trajectory, features, K, b, cam_T_imu):
         self.t = t
-        self.trajecotry = trajectory
+        self.trajectory = trajectory
         self.features = features
         self.n_features = self.features.shape[1]
         self.K = K
@@ -66,7 +67,7 @@ class Updater:
         self.cam_T_imu = cam_T_imu  # In reality this is real frame_T_imu
         self.imu_T_cam = np.linalg.inv(self.cam_T_imu)
         self.M = np.c_[np.vstack((self.K[:2], self.K[:2])), np.array([0, 0, -self.K[0, 0]*self.b, 0])]
-        self.landmarks = np.zeros((self.n_features, 4)) # TODO: Probably don't initialize all mu
+        self.landmarks = np.zeros((4, self.n_features))     # TODO: Probably don't initialize all mu
 
     def features_to_imu_points(self, features: "features at current time"):   # Converts stereo-camera pixels [ur, vr, ul, vl] to IMU frame coordinates
         active_features = np.where(features[0, :] > 0)[0]
@@ -85,10 +86,23 @@ class Updater:
             new_landmarks[i] = elem
         return new_landmarks
 
+    def imu_points_to_world(self, w_T_imu, landmarks):
+        func = lambda x: np.dot(np.linalg.inv(w_T_imu), x)
+        points = np.array([func(elem) for elem in landmarks[:, 1:5]])
+        points = np.column_stack((landmarks[:, 0], points))
+        return points
+
+    def jacobian(self):
+
+        return True
+
+
     def test(self):
-        imu_points = self.features_to_imu_points(self.features[:, :, 0])
-        self.landmarks[imu_points[:, 0].astype(int)] = imu_points[:, 1:]
-        print(self.landmarks)
+        for i in range(t.shape[1]):
+            imu_points = self.features_to_imu_points(self.features[:, :, i])
+            world_points = self.imu_points_to_world(self.trajectory[:, :, i], imu_points)
+            self.landmarks[:, world_points[:, 0].astype(int)] = world_points[:, 1:].T
+        return self.landmarks
         # TODO: Convert imu to world using trajectory
 
 
@@ -102,13 +116,18 @@ if __name__ == '__main__':
     predictor = Predictor(t, linear_velocity, rotational_velocity)
     predictor.test()
     world_T_imu = predictor.trajectory
+    traj = predictor.plot
 
 # (b) Landmark Mapping via EKF Update
     updater = Updater(t, world_T_imu, features, K, b, cam_T_imu)
-    updater.test()
+    landmarks = updater.test()
+    points = np.zeros((4, 4, features.shape[1]))
+    for i in range(features.shape[1]):
+        points[:, :, i] = point_to_transform_3d(landmarks[:, i])
+    np.set_printoptions(precision=2)
 
-# (c) Visual-Inertial SLAM (Extra Credit)
+    # (c) Visual-Inertial SLAM (Extra Credit)
 
 # You can use the function below to visualize the robot pose over time
 
-    visualize_trajectory_2d(world_T_imu, show_ori=True)
+    visualize_trajectory_2d(traj, points,  show_ori=True) # Feature 76 from dataset 27 is weird

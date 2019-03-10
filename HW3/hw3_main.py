@@ -64,8 +64,21 @@ class Updater:
         self.features = features
         self.K = K
         self.b = b
-        self.cam_T_imu = cam_T_imu
+        self.cam_T_imu = cam_T_imu  # In reality this is real frame_T_imu
+        self.M = np.c_[np.vstack((self.K[:2], self.K[:2])),np.array([0, 0, -self.K[0, 0]*self.b, 0])]
 
+    def test(self):
+        active_features = np.where(self.features[0, :, 0] > 0)[0]
+        fsub = -self.M[2,3]
+        fsu = self.M[0, 0]
+        fsv = self.M[1, 1]
+        cu = self.M[0, 2]
+        cv = self.M[1, 2]
+        for f in active_features:
+            z = fsub/(features[0, f, 0]-features[2, f, 0])
+            x = (features[0, f, 0] - cu)*z/fsu
+            y = (features[1, f, 0] - cv)*z/fsv
+            print(x,y,z)
 
 
 if __name__ == '__main__':
@@ -76,9 +89,11 @@ if __name__ == '__main__':
 # (a) IMU Localization via EKF Prediction
     predictor = Predictor(t, linear_velocity, rotational_velocity)
     predictor.test()
-    world_T_imu = predictor.plot
+    world_T_imu = predictor.trajectory
 
 # (b) Landmark Mapping via EKF Update
+    updater = Updater(t, world_T_imu, features, K, b, cam_T_imu)
+    updater.test()
 
 # (c) Visual-Inertial SLAM (Extra Credit)
 

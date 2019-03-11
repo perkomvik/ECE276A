@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.linalg import multi_dot
 import math
 import timeit
 import copy
@@ -64,10 +65,15 @@ class Updater:
         self.n_features = self.features.shape[1]
         self.K = K
         self.b = b
+        self.D = np.row_stack((np.eye(3), np.array([0, 0, 0])))
         self.cam_T_imu = cam_T_imu  # In reality this is real frame_T_imu
         self.imu_T_cam = np.linalg.inv(self.cam_T_imu)
         self.M = np.c_[np.vstack((self.K[:2], self.K[:2])), np.array([0, 0, -self.K[0, 0]*self.b, 0])]
         self.landmarks = np.zeros((4, self.n_features))     # TODO: Probably don't initialize all mu
+        self.num_landmarks = 0
+        self.jacobian = []
+        self.sigma = np.empty((0, 0))
+        self.V = np.eye(4)*10
 
     def features_to_imu_points(self, features: "features at current time"):   # Converts stereo-camera pixels [ur, vr, ul, vl] to IMU frame coordinates
         active_features = np.where(features[0, :] > 0)[0]
@@ -92,23 +98,77 @@ class Updater:
         points = np.column_stack((landmarks[:, 0], points))
         return points
 
-    def jacobian(self):
+    def world_to_camera(self, T, point):
+        temp = np.dot(T, point)
+        temp2 = np.dot(self.cam_T_imu, temp)
+        return temp2
 
+    def dpi_dq(self, q):
+        arr = np.array([[1, 0, -q[0]/q[2], 0], [0, 1, -q[1]/q[2], 0], [0, 0, 0, 0], [0, 0, -q[3]/q[2],1]])
+        return arr/q[2]
+
+    def update_jacobian(self, T, observations):
+        temp = self.world_to_camera(T, self.D)  #o_T_iT_tD in the slides
+        H = np.zeros((observations.shape[0]*4, self.num_landmarks*3))
+        self.jacobian = np.zeros((observations.shape[0], self.num_landmarks, 4, 3))
+        for i,j in enumerate(observations):
+            row = 4*i
+            col = int(3*j)
+            temp2 = self.world_to_camera(T, self.landmarks[:, i])   # o_T_iT_tmu_t,j in the slides
+            temp3 = np.dot(self.dpi_dq(temp2), temp)
+            self.jacobian[i, int(j)] = np.dot(self.M, temp3)
+            H[row:row+4, col:col+3] = np.dot(self.M, temp3)
+        # self.jacobian = H
+        return H
+
+    def update_kalman_gain(self, H, observations):
+        IxV = np.kron(np.eye(observations.shape[0]), self.V)
+        temp = multi_dot([H, self.sigma, H.T])
+        temp2 = np.linalg.inv(temp + IxV)
+        kalman_gain = multi_dot([self.sigma, H.T, temp2])
+        return kalman_gain
+
+    def update_mean(self, kalman_gain, active_features, T, t):
+        mu_t = self.landmarks[:, :self.num_landmarks]
+        func = lambda x: self.world_to_camera(T, x)
+        temp = np.apply_along_axis(func, 0, mu_t)
+        func2 = lambda y: np.dot(self.M, 1/y[2]*y)
+        z_hat = np.apply_along_axis(func2, 0, temp)
+        z = self.features[:, active_features, t]
+        D = np.kron(np.eye(self.num_landmarks), self.D)
+        print(kalman_gain.shape)
+        print(D.shape)
+        mu_tplus1 = multi_dot([D, kalman_gain, (z-z_hat).flatten()])
         return True
 
-
-    def test(self):
-        for i in range(t.shape[1]):
+    def kalman_update(self):
+        s = 0
+        for i in range(3): #t.shape[1]):
+            active_features = np.where(features[:, :, i][0, :] > 0)[0]
             imu_points = self.features_to_imu_points(self.features[:, :, i])
             world_points = self.imu_points_to_world(self.trajectory[:, :, i], imu_points)
-            self.landmarks[:, world_points[:, 0].astype(int)] = world_points[:, 1:].T
+            if active_features.shape[0]:   # No update if there are no new observations
+                new_points = copy.deepcopy(world_points)
+                for elem in world_points:   # Checks if this is the first observation of a landmark.
+                    if not np.array_equal(self.landmarks[:, elem[0].astype(int)], np.array([0, 0, 0, 0])):
+                        index = np.argwhere(new_points[:, 0] == elem[0].astype(int))
+                        new_points = np.delete(new_points, index[0, 0], axis=0)
+                self.landmarks[:, new_points[:, 0].astype(int)] = new_points[:, 1:].T
+                self.num_landmarks = np.count_nonzero(self.landmarks[0, :])
+                for _ in range(new_points.shape[0]):
+                    s += 1
+                    self.sigma = scipy.linalg.block_diag(self.sigma, np.eye(3))
+
+                H = self.update_jacobian(self.trajectory[:, :, i], world_points[:, 0])
+                kalman_gain = self.update_kalman_gain(H, world_points[:, 0])
+                self.update_mean(kalman_gain, active_features, self.trajectory[:, :, i], i)
+
         return self.landmarks
-        # TODO: Convert imu to world using trajectory
 
 
 
 if __name__ == '__main__':
-    filename = "./data/0027.npz"
+    filename = "./data/0042.npz"
     t, features, linear_velocity, rotational_velocity, K, b, cam_T_imu = load_data(filename)
     # Features are [pixel coords left(x, y), pixel coords rightx(x,y) (starting in top left)][landmark number][timestep]
 
@@ -120,7 +180,7 @@ if __name__ == '__main__':
 
 # (b) Landmark Mapping via EKF Update
     updater = Updater(t, world_T_imu, features, K, b, cam_T_imu)
-    landmarks = updater.test()
+    landmarks = updater.kalman_update()
     points = np.zeros((4, 4, features.shape[1]))
     for i in range(features.shape[1]):
         points[:, :, i] = point_to_transform_3d(landmarks[:, i])

@@ -1,12 +1,11 @@
 import numpy as np
 import math
 import matplotlib.pyplot as plt
-import scipy.linalg
 from transforms3d.euler import mat2euler
 
 
 def load_data(file_name):
-    '''
+    """
     function to read visual features, IMU measurements and calibration parameters
     Input:
       file_name: the input data file. Should look like "XXX_sync_KLT.npz"
@@ -33,7 +32,7 @@ def load_data(file_name):
             1  0  0 t3
             0  0  0  1]
           with shape 4*4
-    '''
+    """
     with np.load(file_name) as data:
         t = data["time_stamps"]  # time_stamps
         features = data["features"]  # 4 x num_features : pixel coordinates of features
@@ -46,13 +45,18 @@ def load_data(file_name):
 
 
 def visualize_trajectory_2d(pose, points, path_name="Unknown", show_ori=False):
-    '''
-    function to visualize the trajectory in 2D
+    """
+    Function to visualize the trajectory and landmarks in 2D
     Input:
-      pose:   4*4*N matrix representing the camera pose,
+        pose: 4*4*N matrix representing the camera pose,
               where N is the number of pose, and each
               4*4 matrix is in SE(3)
-    '''
+
+        points: 4x4*M matrix representing the landmarks
+                positions, where M is the number of
+                landmarks, and each 4x4 matrix is in SE(3)
+                with all rotations set to zero
+    """
     fig, ax = plt.subplots(figsize=(5, 5))
     n_pose = pose.shape[2]
     ax.plot(points[0, 3, :], points[1, 3, :], 'g.', linestyle="None", markersize=5, fillstyle="full")
@@ -79,7 +83,8 @@ def visualize_trajectory_2d(pose, points, path_name="Unknown", show_ori=False):
     plt.show(block=False)
     return fig, ax
 
-def pose_to_transform(pose):  # Pose in 6D space (3D position and orientation)
+def pose_to_transform(pose):
+    """Pose in 6D space (3D position and orientation)"""
     R = rotation_matrix(pose[3], pose[4], pose[5])
     p = np.array([pose[0], pose[1], pose[2]])
     T = np.c_[R, p]
@@ -88,6 +93,7 @@ def pose_to_transform(pose):  # Pose in 6D space (3D position and orientation)
     return T
 
 def point_to_transform_3d(point):
+    """Point in 3D space to homogeneous transformation matrix. Used for plotting landmarks"""
     R = np.eye(3)
     p = np.array([point[0], point[1], point[2]])
     T = np.c_[R, p]
@@ -96,6 +102,7 @@ def point_to_transform_3d(point):
     return T
 
 def rotation_matrix(roll, pitch, yaw):
+    """Generate rotation matrix SO(3) for given values for roll, pitch and yaw in sequence xyz"""
     r1 = [math.cos(yaw)*math.cos(pitch), math.cos(yaw)*math.sin(pitch)*math.sin(roll) + math.sin(yaw)*math.cos(roll),
           -math.cos(yaw)*math.sin(pitch)*math.cos(roll) + math.sin(yaw)*math.sin(roll)]
     r2 = [-math.sin(yaw)*math.cos(pitch), -math.sin(yaw)*math.sin(pitch)*math.sin(roll) + math.cos(yaw)*math.cos(roll),
@@ -105,20 +112,23 @@ def rotation_matrix(roll, pitch, yaw):
 
 
 def transform_to_pose(transform):
+    """Convert the 4x4 transform to 6D pose with position and orientation"""
     roll = np.arctan2(transform[2][1], transform[2][2])
     pitch = np.arctan2(transform[2][0], math.sqrt(transform[2][1]**2+transform[2][2]**2))
     yaw = np.arctan2(transform[1][0], transform[0][0])
     return np.append(transform[:3, 3], np.array([roll, pitch, yaw]))
 
 
-def skew(v):    # Generate skew symmetric matrix from vector. Only works on 3x1 vector
+def skew(v):
+    """Generate skew symmetric matrix from vector. Only works on 3x1 vector"""
     a, b, c = v[0], v[1], v[2]
     if v.shape != (3, 1) and v.shape != (3,):
         raise Exception('shape of vector has to be (3, 1). The shape of vector was: {}'.format(v.shape))
     return np.array([[0, -c, b], [c, 0, -a], [-b, a, 0]])
 
 
-def hat(u):     # Maps a 6x1 vector to a 4x4 matrix in se(3). Used for velocity vector u with [ang_vel, lin_vel]^T
+def hat(u):
+    """Maps a 6x1 vector to a 4x4 matrix in se(3). Used for velocity vector u with [ang_vel, lin_vel]^T"""
     v = u[:3]
     omega = u[3:]
     omega_hat = skew(omega)
@@ -126,7 +136,8 @@ def hat(u):     # Maps a 6x1 vector to a 4x4 matrix in se(3). Used for velocity 
     u_hat = np.r_[u_hat, [np.zeros(4)]]
     return u_hat
 
-def adj(u_hat): # Adjoint of u_hat
+def adj(u_hat):
+    """Adjoint of u_hat"""
     omega_hat = u_hat[:3, :3]
     v_hat = skew(u_hat[:3, 3])
     temp = np.hstack((omega_hat, v_hat))
@@ -134,20 +145,22 @@ def adj(u_hat): # Adjoint of u_hat
     u_adj = np.vstack((temp, temp2))
     return u_adj
 
-def matrix_exp(matrix): # Computes a simple matrix exponential using only the first two terms
+def matrix_exp(matrix):
+    """Computes a simple matrix exponential using only the first two terms of the exponential formula"""
     shape = matrix.shape
     if shape[0] != shape[1]:
         raise Exception('The matrix has to be square, shape was {}'.format(shape))
     res = np.eye(shape[0])+matrix
-    # res = scipy.linalg.expm(matrix)
     return res
 
-def remove_outliers(data, m=1.5):  # Removes outliers that are far away from the others. Mainly to make plots prettier
+def remove_outliers(data, m=7):
+    """Removes outliers that are far away from the others. Mainly to make plots prettier"""
     med = np.median(data, axis=1)
-    d = np.abs(data - med)
-    print(med.shape)
+    func = lambda x: x-med
+    d = np.abs(np.apply_along_axis(func, 0, data))
     mdev = np.median(d, axis=1)
-    s = d/mdev
+    func2 = lambda x: x/mdev
+    s = np.apply_along_axis(func2, 0, d)
     res = np.empty((4, 1))
     for idx, point in enumerate(data.T):
         if s[0, idx] < m and s[1, idx] < m:

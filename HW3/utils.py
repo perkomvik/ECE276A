@@ -55,8 +55,8 @@ def visualize_trajectory_2d(pose, points, path_name="Unknown", show_ori=False):
     '''
     fig, ax = plt.subplots(figsize=(5, 5))
     n_pose = pose.shape[2]
-    ax.plot(points[0, 3, :], points[1, 3, :], 'go', linestyle="None")
-    ax.plot(pose[0, 3, :], pose[1, 3, :], 'r-', label=path_name)
+    ax.plot(points[0, 3, :], points[1, 3, :], 'g.', linestyle="None", markersize=5, fillstyle="full")
+    ax.plot(pose[0, 3, :], pose[1, 3, :], 'r-', label=path_name, linewidth=1)
     ax.scatter(pose[0, 3, 0], pose[1, 3, 0], marker='s', label="start")
     ax.scatter(pose[0, 3, -1], pose[1, 3, -1], marker='o', label="end")
     if show_ori:
@@ -75,32 +75,9 @@ def visualize_trajectory_2d(pose, points, path_name="Unknown", show_ori=False):
     ax.axis('equal')
     ax.grid(False)
     ax.legend()
-    plt.savefig("trajectory.png")
+    plt.savefig('trajectory.eps', format='eps', dpi=1000)
     plt.show(block=False)
     return fig, ax
-
-def visualize_landmarks_2d(pose, path_name="Unknown"):
-    '''
-    function to visualize the trajectory in 2D
-    Input:
-      pose:   4*4*N matrix representing the camera pose,
-              where N is the number of pose, and each
-              4*4 matrix is in SE(3)
-    '''
-    fig, ax = plt.subplots(figsize=(5, 5))
-    n_pose = pose.shape[2]
-    ax.plot(pose[0, 3, :], pose[1, 3, :], 'go', label=path_name, linestyle="None")
-    ax.scatter(pose[0, 3, 0], pose[1, 3, 0], marker='s', label="start")
-    ax.scatter(pose[0, 3, -1], pose[1, 3, -1], marker='o', label="end")
-    ax.set_xlabel('x')
-    ax.set_ylabel('y')
-    ax.axis('equal')
-    ax.grid(False)
-    ax.legend()
-    plt.savefig("landmarks.png")
-    plt.show(block=False)
-    return fig, ax
-
 
 def pose_to_transform(pose):  # Pose in 6D space (3D position and orientation)
     R = rotation_matrix(pose[3], pose[4], pose[5])
@@ -164,3 +141,16 @@ def matrix_exp(matrix): # Computes a simple matrix exponential using only the fi
     res = np.eye(shape[0])+matrix
     # res = scipy.linalg.expm(matrix)
     return res
+
+def remove_outliers(data, m=1.5):  # Removes outliers that are far away from the others. Mainly to make plots prettier
+    med = np.median(data, axis=1)
+    d = np.abs(data - med)
+    print(med.shape)
+    mdev = np.median(d, axis=1)
+    s = d/mdev
+    res = np.empty((4, 1))
+    for idx, point in enumerate(data.T):
+        if s[0, idx] < m and s[1, idx] < m:
+            res = np.c_[res, point]
+    return res[:, 1:]
+

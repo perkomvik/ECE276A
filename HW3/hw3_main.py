@@ -38,23 +38,21 @@ class Predictor:
         return sigma
 
 
-    def prediction(self, timestep):
-        current_t = self.t[0][timestep]
-        tau = current_t-self.prev_t
-        self.prev_t = current_t
-        u = np.append(self.lin_vel[:, timestep], self.ang_vel[:, timestep])
+    def kalman_predict(self):
+        for timestep in range(1, t.shape[1]):
+            current_t = self.t[0][timestep]
+            tau = current_t-self.prev_t
+            self.prev_t = current_t
+            u = np.append(self.lin_vel[:, timestep], self.ang_vel[:, timestep])
 
-        self.mu = self.predict_pose(u, tau)
-        self.pose = transform_to_pose(self.mu)
-        self.sigma = self.predict_sigma(u, tau)
+            self.mu = self.predict_pose(u, tau)
+            self.pose = transform_to_pose(self.mu)
+            self.sigma = self.predict_sigma(u, tau)
 
-        self.trajectory[:, :, timestep] = self.mu
-        self.plot[:, :, timestep] = np.linalg.inv(self.mu)
+            self.trajectory[:, :, timestep] = self.mu
+            self.plot[:, :, timestep] = np.linalg.inv(self.mu)
 
-    def test(self):
-        for i in range(1, t.shape[1]):
-            self.prediction(i)
-        return True
+
 
 
 class Updater:
@@ -69,11 +67,10 @@ class Updater:
         self.cam_T_imu = cam_T_imu  # In reality this is real frame_T_imu
         self.imu_T_cam = np.linalg.inv(self.cam_T_imu)
         self.M = np.c_[np.vstack((self.K[:2], self.K[:2])), np.array([0, 0, -self.K[0, 0]*self.b, 0])]
-        self.landmarks = np.zeros((4, self.n_features))     # TODO: Probably don't initialize all mu
+        self.landmarks = np.zeros((4, self.n_features))
         self.num_landmarks = 0
-        self.jacobian = []
         self.sigma = np.empty((0, 0))
-        self.V = np.eye(4)*10
+        self.V = np.eye(4)*1
 
     def features_to_imu_points(self, features: "features at current time"):   # Converts stereo-camera pixels [ur, vr, ul, vl] to IMU frame coordinates
         active_features = np.where(features[0, :] > 0)[0]
@@ -110,15 +107,12 @@ class Updater:
     def update_jacobian(self, T, observations):
         temp = self.world_to_camera(T, self.D)  #o_T_iT_tD in the slides
         H = np.zeros((observations.shape[0]*4, self.num_landmarks*3))
-        self.jacobian = np.zeros((observations.shape[0], self.num_landmarks, 4, 3))
         for i,j in enumerate(observations):
             row = 4*i
             col = int(3*j)
             temp2 = self.world_to_camera(T, self.landmarks[:, i])   # o_T_iT_tmu_t,j in the slides
             temp3 = np.dot(self.dpi_dq(temp2), temp)
-            self.jacobian[i, int(j)] = np.dot(self.M, temp3)
             H[row:row+4, col:col+3] = np.dot(self.M, temp3)
-        # self.jacobian = H
         return H
 
     def update_kalman_gain(self, H, observations):
@@ -128,22 +122,30 @@ class Updater:
         kalman_gain = multi_dot([self.sigma, H.T, temp2])
         return kalman_gain
 
-    def update_mean(self, kalman_gain, active_features, T, t):
-        mu_t = self.landmarks[:, :self.num_landmarks]
+    def update_mu(self, kalman_gain, active_features, T, t):
+        mu = self.landmarks[:, active_features]
         func = lambda x: self.world_to_camera(T, x)
-        temp = np.apply_along_axis(func, 0, mu_t)
+        temp = np.apply_along_axis(func, 0, mu)
         func2 = lambda y: np.dot(self.M, 1/y[2]*y)
         z_hat = np.apply_along_axis(func2, 0, temp)
         z = self.features[:, active_features, t]
         D = np.kron(np.eye(self.num_landmarks), self.D)
-        print(kalman_gain.shape)
-        print(D.shape)
-        mu_tplus1 = multi_dot([D, kalman_gain, (z-z_hat).flatten()])
+        temp = multi_dot([D, kalman_gain, (z - z_hat).flatten()]).reshape(4, self.num_landmarks)
+        new_mu = self.landmarks[:, :self.num_landmarks] + temp
+        self.landmarks[:, :self.num_landmarks] = new_mu
+        return True
+
+    def update_sigma(self, H, kalman_gain):
+        shape = kalman_gain.shape[0]
+        I = np.eye(shape)
+        temp = I-np.dot(kalman_gain, H)
+        new_sigma = np.dot(temp, self.sigma)
+        self.sigma = new_sigma
         return True
 
     def kalman_update(self):
         s = 0
-        for i in range(3): #t.shape[1]):
+        for i in range(t.shape[1]):
             active_features = np.where(features[:, :, i][0, :] > 0)[0]
             imu_points = self.features_to_imu_points(self.features[:, :, i])
             world_points = self.imu_points_to_world(self.trajectory[:, :, i], imu_points)
@@ -161,33 +163,41 @@ class Updater:
 
                 H = self.update_jacobian(self.trajectory[:, :, i], world_points[:, 0])
                 kalman_gain = self.update_kalman_gain(H, world_points[:, 0])
-                self.update_mean(kalman_gain, active_features, self.trajectory[:, :, i], i)
-
+                self.update_mu(kalman_gain, active_features, self.trajectory[:, :, i], i)
+                self.update_sigma(H, kalman_gain)
         return self.landmarks
 
 
 
 if __name__ == '__main__':
-    filename = "./data/0042.npz"
-    t, features, linear_velocity, rotational_velocity, K, b, cam_T_imu = load_data(filename)
-    # Features are [pixel coords left(x, y), pixel coords rightx(x,y) (starting in top left)][landmark number][timestep]
+#     filename = "./data/0042.npz"
+#     t, features, linear_velocity, rotational_velocity, K, b, cam_T_imu = load_data(filename)
+#     # Features are [pixel coords left(x, y), pixel coords rightx(x,y) (starting in top left)][landmark number][timestep]
+#
+# # (a) IMU Localization via EKF Prediction
+#     predictor = Predictor(t, linear_velocity, rotational_velocity)
+#     predictor.kalman_predict()
+#     world_T_imu = predictor.trajectory
+#     traj = predictor.plot
+#
+# # (b) Landmark Mapping via EKF Update
+#     updater = Updater(t, world_T_imu, features, K, b, cam_T_imu)
+#     landmarks = updater.kalman_update()
+#     np.save("landmarks.npy", landmarks)
+#     np.save("trajectory.npy", traj)
 
-# (a) IMU Localization via EKF Prediction
-    predictor = Predictor(t, linear_velocity, rotational_velocity)
-    predictor.test()
-    world_T_imu = predictor.trajectory
-    traj = predictor.plot
-
-# (b) Landmark Mapping via EKF Update
-    updater = Updater(t, world_T_imu, features, K, b, cam_T_imu)
-    landmarks = updater.kalman_update()
-    points = np.zeros((4, 4, features.shape[1]))
-    for i in range(features.shape[1]):
+    traj = np.load("trajectory.npy")
+    landmarks = np.load("landmarks.npy")
+    print(landmarks.shape)
+    filtered_landmarks = remove_outliers(landmarks)
+    print(filtered_landmarks.shape)
+    points = np.zeros((4, 4, landmarks.shape[1]))
+    for i in range(landmarks.shape[1]):
         points[:, :, i] = point_to_transform_3d(landmarks[:, i])
-    np.set_printoptions(precision=2)
 
     # (c) Visual-Inertial SLAM (Extra Credit)
 
 # You can use the function below to visualize the robot pose over time
+    from utils import *
 
-    visualize_trajectory_2d(traj, points,  show_ori=True) # Feature 76 from dataset 27 is weird
+    visualize_trajectory_2d(traj, points,  show_ori=True)

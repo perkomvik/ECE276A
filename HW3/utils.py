@@ -153,7 +153,7 @@ def matrix_exp(matrix):
     res = np.eye(shape[0])+matrix
     return res
 
-def remove_outliers(data, m=7):
+def remove_outliers(data, m=6):
     """Removes outliers that are far away from the others. Mainly to make plots prettier"""
     med = np.median(data, axis=1)
     func = lambda x: x-med
